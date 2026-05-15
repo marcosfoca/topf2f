@@ -24,7 +24,7 @@ export default function LeadsPage() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [temp, status]);
+  useEffect(() => { load(); }, [temp, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const counts = useMemo(() => {
     const c = { hot: 0, warm: 0, cold: 0 };

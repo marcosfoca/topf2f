@@ -1,0 +1,9 @@
+backend/backend/.env
+backend/backend/__pycache__/
+backend/backend/*.pyc
+backend/backend/venv/
+backend/backend/.venv/
+frontend/frontend/node_modules/
+frontend/frontend/build/
+frontend/frontend/.env.local
+frontend/frontend/.env.production

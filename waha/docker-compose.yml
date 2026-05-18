@@ -1,0 +1,14 @@
+services:
+  waha:
+    image: devlikeapro/waha:noweb
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./sessions:/app/.sessions
+    environment:
+      - WHATSAPP_DEFAULT_DRIVER=NOWEB
+      - WAHA_SESSIONS_PATH=/app/.sessions
+      - WAHA_WEBHOOKS_EVENTS=message,message.ack
+      - WAHA_API_KEY=${WAHA_API_KEY}
+      - WAHA_WEBHOOKS_URLS=${BACKEND_URL}/api/webhooks/whatsapp

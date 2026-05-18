@@ -1,93 +1,119 @@
-# Despliegue de WAHA en Fly.io (gratis)
-
-## Requisitos previos
-- Tener Git instalado
-- Tener el repo subido a GitHub (ya hecho)
+# Despliegue de WAHA en Oracle Cloud (gratis para siempre)
 
 ---
 
-## PASO 1 — Instalar flyctl
+## PASO 1 — Crear cuenta en Oracle Cloud
 
-Ve a https://fly.io/docs/flyctl/install/ y descarga el instalador para Windows.
-O desde PowerShell:
-```
-iwr https://fly.io/install.ps1 -useb | iex
-```
-
----
-
-## PASO 2 — Crear cuenta en Fly.io
-
-1. Ve a https://fly.io → Sign Up
-2. Introduce email y contraseña
-3. **No hace falta tarjeta** para el plan gratuito
+1. Ve a https://cloud.oracle.com → **Start for free**
+2. Rellena nombre, email, país
+3. Introduce tarjeta de crédito (no te cobran nada, es solo verificación)
+4. Elige región: **Germany Central (Frankfurt)** o la más cercana
 
 ---
 
-## PASO 3 — Iniciar sesión desde la terminal
+## PASO 2 — Crear la VM gratuita
+
+1. En el menú principal → **Compute** → **Instances** → **Create Instance**
+2. Nombre: `topf2f-waha`
+3. Image: **Ubuntu 22.04** (clic en "Change image")
+4. Shape: **VM.Standard.A1.Flex** → 1 OCPU, 6GB RAM (siempre gratis)
+5. En **Add SSH keys** → selecciona **Generate a key pair** → descarga ambas claves
+6. Clic en **Create**
+
+Espera ~2 minutos a que el estado pase a **Running**.
+Copia la **IP pública** de la instancia (la necesitarás después).
+
+---
+
+## PASO 3 — Abrir el puerto 3000 en Oracle Cloud
+
+1. Clic en tu instancia → **Subnet** → **Default Security List**
+2. **Add Ingress Rules**:
+   - Source: `0.0.0.0/0`
+   - IP Protocol: TCP
+   - Destination Port: `3000`
+3. Clic en **Add Ingress Rules**
+
+---
+
+## PASO 4 — Conectarte a la VM por SSH
+
+Desde tu terminal (Windows usa PowerShell o Git Bash):
 
 ```bash
-fly auth login
+ssh -i ruta/a/tu/clave-privada.key ubuntu@IP_PUBLICA
 ```
-Se abre el navegador → autoriza.
 
 ---
 
-## PASO 4 — Ir a la carpeta waha
+## PASO 5 — Instalar Docker en la VM
+
+Una vez conectado, ejecuta:
 
 ```bash
-cd ruta/a/tu/proyecto/waha
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/marcosfoca/topf2f/main/waha/setup.sh)"
+```
+
+O manualmente:
+```bash
+sudo apt-get update -y
+sudo apt-get install -y docker.io docker-compose-plugin
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo iptables -I INPUT -p tcp --dport 3000 -j ACCEPT
+sudo apt-get install -y iptables-persistent
+sudo netfilter-persistent save
 ```
 
 ---
 
-## PASO 5 — Crear la app en Fly.io
+## PASO 6 — Descargar los archivos de WAHA
 
 ```bash
-fly launch --no-deploy --copy-config
+mkdir waha && cd waha
+curl -O https://raw.githubusercontent.com/marcosfoca/topf2f/main/waha/docker-compose.yml
 ```
-- Cuando pregunte el nombre: escribe `topf2f-waha`
-- Región: `mad` (Madrid)
-- No crear Postgres ni Redis: **No**
 
 ---
 
-## PASO 6 — Crear el volumen persistente (guarda la sesión de WhatsApp)
+## PASO 7 — Crear el archivo .env
 
 ```bash
-fly volumes create waha_sessions --region mad --size 1
+nano .env
 ```
+
+Escribe esto (cambia la URL de Render por la tuya real):
+```
+WAHA_API_KEY=topf2f_waha_2024
+BACKEND_URL=https://topf2f.onrender.com
+```
+
+Guarda: `Ctrl+O` → Enter → `Ctrl+X`
 
 ---
 
-## PASO 7 — Configurar los secretos
-
-Elige una API key cualquiera (ej: `topf2f_waha_2024`) y ponla en ambos comandos:
+## PASO 8 — Arrancar WAHA
 
 ```bash
-fly secrets set WAHA_API_KEY=topf2f_waha_2024
-fly secrets set WAHA_WEBHOOKS_URLS=https://topf2f.onrender.com/api/webhooks/whatsapp
+sudo docker compose up -d
 ```
-> Sustituye `https://topf2f.onrender.com` por la URL real de tu backend en Render.
 
----
-
-## PASO 8 — Desplegar
-
+Comprueba que funciona:
 ```bash
-fly deploy
+sudo docker compose logs -f
 ```
-Tarda ~2 minutos. Al acabar te da una URL tipo:
-`https://topf2f-waha.fly.dev`
+
+Deberías ver: `WhatsApp HTTP API is running on port 3000`
 
 ---
 
-## PASO 9 — Iniciar la sesión de WhatsApp (escanear QR)
+## PASO 9 — Escanear el QR de WhatsApp
 
-1. Ve a `https://topf2f-waha.fly.dev` en el navegador
-2. Usuario: (vacío) — Contraseña: `topf2f_waha_2024` (tu API key)
-3. Ve a **Sessions** → **Start session**
-4. Aparece un QR → **escanéalo con tu móvil** en WhatsApp → Dispositivos vinculados → Vincular dispositivo
+1. Abre en el navegador: `http://IP_PUBLICA:3000`
+2. Usuario: (vacío) — Contraseña: `topf2f_waha_2024`
+3. Ve a **Sessions** → **Start** → aparece un QR
+4. Abre WhatsApp en tu móvil → **Dispositivos vinculados** → **Vincular dispositivo**
+5. Escanea el QR
 
 ---
 
@@ -97,7 +123,7 @@ En Render → tu servicio → **Environment**:
 
 | Key | Value |
 |---|---|
-| `WAHA_URL` | `https://topf2f-waha.fly.dev` |
+| `WAHA_URL` | `http://IP_PUBLICA:3000` |
 | `WAHA_API_KEY` | `topf2f_waha_2024` |
 
 Guarda → Render redespliega solo.
@@ -106,4 +132,4 @@ Guarda → Render redespliega solo.
 
 ## ¡Listo! El bot ya funciona.
 
-Cuando alguien se inscriba en el formulario recibirá un WhatsApp automático.
+La sesión de WhatsApp se guarda en la VM y sobrevive reinicios.

@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: topf2f-waha
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: frankfurt
+    plan: starter          # necesita plan de pago para disco persistente
+    disk:
+      name: waha-sessions
+      mountPath: /app/.sessions
+      sizeGB: 1
+    envVars:
+      - key: WHATSAPP_DEFAULT_DRIVER
+        value: WEBJS
+      - key: WAHA_API_KEY
+        value: PLACEHOLDER_WAHA_API_KEY
+      - key: WAHA_WEBHOOKS_URLS
+        value: PLACEHOLDER_BACKEND_URL/api/webhooks/whatsapp
+      - key: WAHA_WEBHOOKS_EVENTS
+        value: message,message.ack

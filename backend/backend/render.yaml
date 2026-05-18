@@ -7,15 +7,13 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: WHATSAPP_PHONE_NUMBER_ID
-        value: PLACEHOLDER_PHONE_ID
-      - key: WHATSAPP_ACCESS_TOKEN
-        value: PLACEHOLDER_TOKEN
-      - key: WHATSAPP_VERIFY_TOKEN
-        value: PLACEHOLDER_VERIFY_TOKEN
-      - key: WHATSAPP_API_VERSION
-        value: v22.0
-      - key: WHATSAPP_DEFAULT_LANG
-        value: es
+      - key: WAHA_URL
+        value: PLACEHOLDER_WAHA_URL
+      - key: WAHA_SESSION
+        value: default
+      - key: WAHA_API_KEY
+        value: PLACEHOLDER_WAHA_API_KEY
       - key: MONGO_URL
         value: PLACEHOLDER_MONGO_URL
+      - key: DB_NAME
+        value: topf2f

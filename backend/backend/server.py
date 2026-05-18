@@ -26,12 +26,17 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ----------------- WhatsApp constants -----------------
-PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
-TOKEN    = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
-API_V    = os.environ.get("WHATSAPP_API_VERSION", "v22.0")
-LANG     = os.environ.get("WHATSAPP_DEFAULT_LANG", "es")
-WA_URL   = f"https://graph.facebook.com/{API_V}/{PHONE_ID}/messages"
+# ----------------- WAHA (WhatsApp HTTP API) -----------------
+WAHA_URL     = os.environ.get("WAHA_URL", "http://localhost:3000")
+WAHA_SESSION = os.environ.get("WAHA_SESSION", "default")
+WAHA_API_KEY = os.environ.get("WAHA_API_KEY", "")
+
+TEMPLATES = {
+    "top_f2f_bienvenida":    "¡Hola {0}! 👋 Gracias por apuntarte a TOP F2F.\n\nHemos recibido tu solicitud: {1} años, {2}, preferencia: {3}.\n\nResponde *SI* para confirmar tus datos.",
+    "top_f2f_citacion_a":    "¡Buenas noticias! 🎉 Tienes una entrevista con TOP F2F mañana a las *{0}*.",
+    "top_f2f_citacion_b":    "📍 *Dirección:* {0}, {1}\n🗺️ {2}\n\nResponde *SI* para confirmar o *NO* si no puedes asistir.",
+    "top_f2f_recordatorio_2h": "⏰ Recuerda que tu entrevista con TOP F2F es en *2 horas*. ¡Te esperamos!",
+}
 
 # ----------------- Helpers -----------------
 def now_utc() -> datetime:
@@ -61,35 +66,32 @@ def admin_emails() -> List[str]:
         return []
     return [e.strip().lower() for e in raw.split(",") if e.strip()]
 
-# ----------------- WhatsApp senders -----------------
-async def send_whatsapp_template(phone: str, template: str, variables: list):
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone.lstrip("+"),
-        "type": "template",
-        "template": {
-            "name": template,
-            "language": {"code": LANG},
-            "components": [{
-                "type": "body",
-                "parameters": [{"type": "text", "text": str(v)} for v in variables],
-            }] if variables else [],
-        },
-    }
+# ----------------- WhatsApp senders (WAHA) -----------------
+def _wa_chat_id(phone: str) -> str:
+    return phone.lstrip("+") + "@c.us"
+
+async def _waha_post(endpoint: str, payload: dict):
+    headers = {"X-Api-Key": WAHA_API_KEY} if WAHA_API_KEY else {}
     async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(WA_URL, headers={"Authorization": f"Bearer {TOKEN}"}, json=payload)
+        r = await c.post(f"{WAHA_URL}{endpoint}", json=payload, headers=headers)
         return r.status_code, r.json()
 
+async def send_whatsapp_template(phone: str, template: str, variables: list):
+    text = TEMPLATES.get(template, template)
+    for i, v in enumerate(variables):
+        text = text.replace(f"{{{i}}}", str(v))
+    return await _waha_post("/api/sendText", {
+        "chatId": _wa_chat_id(phone),
+        "text": text,
+        "session": WAHA_SESSION,
+    })
+
 async def send_whatsapp_free_message(phone: str, text: str):
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone.lstrip("+"),
-        "type": "text",
-        "text": {"body": text}
-    }
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(WA_URL, headers={"Authorization": f"Bearer {TOKEN}"}, json=payload)
-        return r.status_code, r.json()
+    return await _waha_post("/api/sendText", {
+        "chatId": _wa_chat_id(phone),
+        "text": text,
+        "session": WAHA_SESSION,
+    })
 
 # ----------------- Models -----------------
 class LeadCreate(BaseModel):
@@ -523,63 +525,60 @@ async def reactivate_appointment(appointment_id: str, user: Dict[str, Any] = Dep
     )
     return {"ok": True}
 
-# ----------------- WhatsApp Webhooks -----------------
-@api_router.get("/webhooks/whatsapp")
-async def wa_verify(request: Request):
-    mode      = request.query_params.get("hub.mode")
-    token     = request.query_params.get("hub.verify_token")
-    challenge = request.query_params.get("hub.challenge")
-    if mode == "subscribe" and token == os.environ.get("WHATSAPP_VERIFY_TOKEN"):
-        return PlainTextResponse(challenge)
-    raise HTTPException(status_code=403)
-
+# ----------------- WAHA Webhook -----------------
 @api_router.post("/webhooks/whatsapp")
 async def wa_webhook(request: Request):
     data = await request.json()
     now_iso = iso(now_utc())
+    event = data.get("event", "")
 
-    for entry in data.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
+    # ACK de mensajes enviados (delivered, read, etc.)
+    if event == "message.ack":
+        payload = data.get("payload", {})
+        msg_id = payload.get("id")
+        ack    = payload.get("ack", "")  # "sent" | "delivered" | "read"
+        if msg_id and ack:
+            await db.automation_logs.update_one(
+                {"provider_message_id": msg_id},
+                {"$set": {"status": ack, "last_status_at": now_iso}},
+            )
+        return {"ok": True}
 
-            for st in value.get("statuses", []):
-                await db.automation_logs.update_one(
-                    {"provider_message_id": st["id"]},
-                    {"$set": {"status": st["status"], "last_status_at": now_iso}},
+    # Mensajes entrantes
+    if event == "message":
+        payload = data.get("payload", {})
+        if payload.get("type") != "chat":
+            return {"ok": True}
+        raw_from = payload.get("from", "")           # "34612345678@c.us"
+        phone    = "+" + raw_from.replace("@c.us", "").replace("@s.whatsapp.net", "")
+        text     = payload.get("body", "").strip().lower()
+        lead     = await db.leads.find_one({"phone": phone}, {"_id": 0})
+        if not lead:
+            return {"ok": True}
+
+        if not lead.get("verified"):
+            if text.startswith("si"):
+                await db.leads.update_one(
+                    {"lead_id": lead["lead_id"]},
+                    {"$set": {"verified": True, "verified_at": now_iso}},
+                )
+        elif lead.get("status") == "Citado":
+            if text.startswith("si"):
+                await db.leads.update_one(
+                    {"lead_id": lead["lead_id"]}, {"$set": {"status": "Confirmado"}}
+                )
+            elif text.startswith("no"):
+                await db.leads.update_one(
+                    {"lead_id": lead["lead_id"]}, {"$set": {"status": "No asistirá"}}
                 )
 
-            for msg in value.get("messages", []):
-                if msg.get("type") != "text":
-                    continue
-                phone = "+" + msg["from"]
-                text  = (msg.get("text") or {}).get("body", "").strip().lower()
-                lead  = await db.leads.find_one({"phone": phone}, {"_id": 0})
-                if not lead:
-                    continue
-
-                if not lead.get("verified"):
-                    if text.startswith("si"):
-                        await db.leads.update_one(
-                            {"lead_id": lead["lead_id"]},
-                            {"$set": {"verified": True, "verified_at": now_iso}},
-                        )
-                elif lead.get("status") == "Citado":
-                    if text.startswith("si"):
-                        await db.leads.update_one(
-                            {"lead_id": lead["lead_id"]}, {"$set": {"status": "Confirmado"}}
-                        )
-                    elif text.startswith("no"):
-                        await db.leads.update_one(
-                            {"lead_id": lead["lead_id"]}, {"$set": {"status": "No asistirá"}}
-                        )
-
-                await db.lead_messages.insert_one({
-                    "msg_id": f"wam_{uuid.uuid4().hex[:12]}",
-                    "lead_id": lead["lead_id"],
-                    "direction": "in",
-                    "text": text,
-                    "received_at": now_iso,
-                })
+        await db.lead_messages.insert_one({
+            "msg_id": f"wam_{uuid.uuid4().hex[:12]}",
+            "lead_id": lead["lead_id"],
+            "direction": "in",
+            "text": text,
+            "received_at": now_iso,
+        })
 
     return {"ok": True}
 

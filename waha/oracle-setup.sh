@@ -3,7 +3,7 @@
 set -e
 
 echo "==> Obteniendo datos de la cuenta..."
-TENANCY_ID=$(oci iam compartment list --query "data[0].\"compartment-id\"" --raw-output)
+TENANCY_ID=$OCI_TENANCY
 AD=$(oci iam availability-domain list --compartment-id $TENANCY_ID --query "data[0].name" --raw-output)
 echo "    Tenancy: $TENANCY_ID"
 echo "    AD: $AD"
